@@ -14,20 +14,46 @@ local Template = {
 	}
 }
 
+local function stateChanged(state, dataStore)
+	while dataStore.State == false do
+		if dataStore:Open() ~= "Success" then task.wait(7) end
+	end
+end
+
 function init()
 	PlayerDataService:EnableAutoSetup(Template)
 end
 
-PlayersService.PlayerAdded:Connect(function(player)
-	player.CharacterAdded:Connect(function(character)
-		local mesh = Instance.new("CharacterMesh")
-		
-		mesh.MeshId = 48112070
-		mesh.BodyPart = Enum.BodyPart.Torso
-		
-		mesh.Parent = character
+--[[function PlayerAdded(plr)
+	local DataStore = DataStoreModule.new("Player", plr.UserId)
+
+	local function CharacterAdded()
+		if DataStore.State == true then
+			local Tools = DataStore.Value.Tools
+
+			for _, Tool in pairs(Tools) do
+				local ToolInstance = game.ReplicatedStorage.Tools:FindFirstChild(Tool.Name)
+
+				local ToolClone = ToolInstance:Clone()
+
+				ToolClone.Parent = plr.Backpack
+			end
+		end
+	end
+
+	plr.CharacterAdded:Connect(CharacterAdded)
+
+	if plr.Character then
+		CharacterAdded(plr.Character)
+	end
+
+	DataStore.StateChanged:Connect(stateChanged)
+
+	task.defer(function()
+		stateChanged(DataStore.State, DataStore)
 	end)
-end)
+end]]
+
 
 task.wait(2)
 
