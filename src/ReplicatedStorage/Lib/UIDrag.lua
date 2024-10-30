@@ -12,6 +12,7 @@ local GuiService = game:GetService("GuiService")
 
 local DraggableObject 		= {}
 DraggableObject.__index 	= DraggableObject
+local DraggingObj = nil
 
 -- Check if either mouse movement or touch input
 function MouseOrTouchMovement(input)
@@ -19,15 +20,17 @@ function MouseOrTouchMovement(input)
 end
 
 -- Sets up a new draggable object
-function DraggableObject.new(Object, MainGui, MoveCodes)
+function DraggableObject.new(Object, MainGui, MoveCodes, BP)
     local self 			= {}
-    self.Object			= Object
+    self.Object			= Object.Frame.Button
     self.DragStarted	= nil
     self.DragEnded		= nil
     self.Dragged		= nil
     self.Dragging		= false
     self.MainGui 		= MainGui
     self.FastMoveCodes 	= MoveCodes
+    self.BP = BP
+    self.Data = Object
 
     setmetatable(self, DraggableObject)
 
@@ -41,13 +44,16 @@ function DraggableObject:Enable()
     local dragStart			= nil
     local startPos			= nil
     local preparingToDrag	= false
+    local Data = self.Data
     
     local GhostObject
         
     -- Updates the element
     local function update(input)
+        local mouselocation = UserInputService:GetMouseLocation()
+
         local delta 		= input.Position - dragStart
-        local newPosition	= UDim2_new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        local newPosition	= UDim2_new(0, mouselocation.X + GuiService:GetGuiInset().X - (object.AbsoluteSize.X / 2), 0, mouselocation.Y + (object.AbsoluteSize.Y / 2) - GuiService:GetGuiInset().Y)
         
         GhostObject.Position = newPosition
 
@@ -56,6 +62,9 @@ function DraggableObject:Enable()
 
     self.InputBegan = object.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if Data.Locked then return end
+        if Data.Glued then return end
+        
             
         local isOneKeyDown = false
 
@@ -75,6 +84,8 @@ function DraggableObject:Enable()
                 if input.UserInputState == Enum.UserInputState.End and (self.Dragging or preparingToDrag) then
                     self.Dragging = false
                     connection:Disconnect()
+
+                    DraggingObj = nil
 
                     if self.DragEnded and not preparingToDrag then
                         
@@ -98,15 +109,27 @@ function DraggableObject:Enable()
     end)
 
     self.InputChanged2 = UserInputService.InputChanged:Connect(function(input)
+
         if object.Parent == nil then
             self:Disable()
             return
         end
 
+        if object.Parent.Parent == self.MainGui.Inventory.InventoryMain.Background.ScrollingFrame then
+            if not self.BP:IsInventoryOpen() then return end
+        end
+
+        if not object.Parent.Tool.Value then return end
+
         if MouseOrTouchMovement(input) and preparingToDrag then
+            if DraggingObj then return end
             preparingToDrag = false
 
             if self.DragStarted then
+
+                DraggingObj = object
+
+                print("drag started")
                 
             if GhostObject then GhostObject:Destroy() self.GhostObject = nil end
                 
@@ -144,6 +167,8 @@ function DraggableObject:Disable()
     self.InputBegan:Disconnect()
     self.InputChanged:Disconnect()
     self.InputChanged2:Disconnect()
+
+    DraggingObj = nil
     
     local GhostPosition
     

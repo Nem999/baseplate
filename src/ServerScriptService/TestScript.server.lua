@@ -57,9 +57,9 @@ end]]
 
 task.wait(2)
 
---[[for i = 1, 60 do
+for i = 1, 60 do
 	local to = Instance.new("Tool")
 	to.Name = i
 	
-	to.Parent = game.Players:GetPlayers()[1].Backpack
-end]]
+	to.Parent = game.Players:GetPlayers()[1].Character
+end
