@@ -27,12 +27,12 @@ local BackpackInstance
 --[[ SETTINGS ]]--
 Backpack.Settings = {}
 Backpack.Settings.MaxHotbarToolSlots = 10
-Backpack.Settings.MaxHeldTools = 3
+Backpack.Settings.MaxHeldTools = 1
 Backpack.Settings.USE_SCROLLWHEEL = false
 Backpack.Settings.AutoCalculateMaxToolSlots = true
 Backpack.Settings.MinHotbarSlots = 3
 Backpack.Settings.EquipCooldown = 0.1
-Backpack.Settings.Animate = true
+Backpack.Settings.Animate = false
 Backpack.Settings.BackpackButtonOpenedColor = Color3.fromRGB(141, 164, 238)
 Backpack.Settings.UseViewportFrame = false
 Backpack.Settings.DesiredPadding = UDim.new(0, 10)
@@ -957,6 +957,7 @@ function SetBarTransparency(Bar, Transparency, time)
 				Spring.stop(ImageFrame, "ImageTransparency")
 				ImageFrame.ImageTransparency = Transparency
 			else
+				print('set '..Transparency)
 				Animate(ImageFrame, "ImageTransparency", Transparency, realtime, 8.3)
 			end
 		end
@@ -1060,23 +1061,38 @@ function MoveEquipBar(FrameSlot, DisabledFrame, time)
 					Highlight.Highlight.Visible = true
 				end
 
-				if Highlight.Highlight.ImageLabel.ImageTransparency ~= 1 then
-					SetBarTransparency(Highlight.Highlight, 0, 0)
-					Animate(Highlight.Highlight, "Position", UDim2.fromOffset(FrameSlot.Frame.AbsolutePosition.X + GuiService:GetGuiInset().X, FrameSlot.Frame.AbsolutePosition.Y + GuiService:GetGuiInset().Y), 0.78, 4)
-				else
-					Spring.stop(Highlight.Highlight, "Position")
-
-					Highlight.Highlight.Position = UDim2.fromOffset(FrameSlot.Frame.AbsolutePosition.X + GuiService:GetGuiInset().X, FrameSlot.Frame.AbsolutePosition.Y + GuiService:GetGuiInset().Y)
-					SetBarTransparency(Highlight.Highlight, 0, 0)
-				end
-
 				HighlightedTools[i].FrameSlot = FrameSlot
 				HighlightedTools[i].Frame = FrameSlot.Frame
 				HighlightedTools[i].Tool = FrameSlot.Tool
+
+				local function move()
+					if Highlight.Highlight.ImageLabel.ImageTransparency ~= 1 then
+						SetBarTransparency(Highlight.Highlight, 0, 0)
+						if Backpack.Settings.Animate == true then
+							Spring.target(Highlight.Highlight,  0.78, 4, {["Position"] = UDim2.fromOffset(FrameSlot.Frame.AbsolutePosition.X + GuiService:GetGuiInset().X, FrameSlot.Frame.AbsolutePosition.Y + GuiService:GetGuiInset().Y)})
+						else
+							Highlight.Highlight.Position = UDim2.fromOffset(FrameSlot.Frame.AbsolutePosition.X + GuiService:GetGuiInset().X, FrameSlot.Frame.AbsolutePosition.Y + GuiService:GetGuiInset().Y)
+						end
+					else
+						Spring.stop(Highlight.Highlight, "Position")
+	
+						Highlight.Highlight.Position = UDim2.fromOffset(FrameSlot.Frame.AbsolutePosition.X + GuiService:GetGuiInset().X, FrameSlot.Frame.AbsolutePosition.Y + GuiService:GetGuiInset().Y)
+						SetBarTransparency(Highlight.Highlight, 0, 0)
+					end
+				end
+
+				while FrameSlot.Moving do
+					move()
+
+					wait()
+				end
+
+				move()
+
 				break
 			else
 				if Highlight.Tool then continue end
-				Animate(Highlight.Highlight, "Position",  UDim2.fromOffset(FrameSlot.Frame.AbsolutePosition.X + GuiService:GetGuiInset().X, FrameSlot.Frame.AbsolutePosition.Y + GuiService:GetGuiInset().Y), .79, 3)
+				Spring.stop(Highlight.Highlight, "Position")
 
 				HighlightedTools[i].FrameSlot = FrameSlot
 				HighlightedTools[i].Frame = FrameSlot.Frame
@@ -1089,6 +1105,12 @@ function MoveEquipBar(FrameSlot, DisabledFrame, time)
 				end
 
 				SetBarTransparency(Highlight.Highlight, 0)
+
+				while FrameSlot.Moving do
+					Animate(Highlight.Highlight, "Position",  UDim2.fromOffset(FrameSlot.Frame.AbsolutePosition.X + GuiService:GetGuiInset().X, FrameSlot.Frame.AbsolutePosition.Y + GuiService:GetGuiInset().Y), .79, 3)
+				end
+
+				Animate(Highlight.Highlight, "Position",  UDim2.fromOffset(FrameSlot.Frame.AbsolutePosition.X + GuiService:GetGuiInset().X, FrameSlot.Frame.AbsolutePosition.Y + GuiService:GetGuiInset().Y), .79, 3)
 				break
 			end	
 
@@ -1241,7 +1263,6 @@ function BuildGui()
 			if Slot == PlacementFrame then
 
 				local Completed = false
-
 				Animate(NewSlot, "Position", UDim2.fromOffset(PlacementFrame.AbsolutePosition.X + GuiService:GetGuiInset().X, PlacementFrame.AbsolutePosition.Y + GuiService:GetGuiInset().Y), .79, 3)
 
 				if Backpack.Settings.Animate == true then
@@ -1252,10 +1273,12 @@ function BuildGui()
 
 				defer(function()
 					while not Completed do
+						HotbarSlots[i].Moving = true
 						CalculateGluedSlotPosition()
 						CalculateInventoryButtonPosition()
 						wait()
 					end
+					HotbarSlots[i].Moving = nil
 				end)
 
 				InventoryFrame.Position = UDim2.new(.5, 0, 0, PlacementFrame.AbsolutePosition.Y - 100)
@@ -1273,6 +1296,8 @@ function BuildGui()
 
 								local TargetPosition = PlacementFrame.AbsolutePosition
 								Highlight.Highlight.Position = UDim2.fromOffset(Highlight.Highlight.AbsolutePosition.X, TargetPosition.Y + GuiService:GetGuiInset().Y)
+
+
 
 								Animate(Highlight.Highlight, "Position",  UDim2.fromOffset(PlacementFrame.AbsolutePosition.X + GuiService:GetGuiInset().X, PlacementFrame.AbsolutePosition.Y + GuiService:GetGuiInset().Y), .79, 3)
 							end
@@ -2949,7 +2974,7 @@ function Backpack:SetCooldown(Tool, Seconds: number)
 	TempConnection = RunService.RenderStepped:Connect(function(deltaTime)
 		if Slot.Tool ~= Tool then Slot = Backpack:GetSlotFromTool(Tool) end
 		if not Slot then stop() return end -- Tool probably was destroyed
-		if Slot.CooldownActive ~= StartingServerTime then stop() end
+		if Slot.CooldownActive ~= StartingServerTime then stop() return end
 
 		-- If the slot gets switched find and set it again
 		-- GetSlotFromTool can be an expensive call so lets use it sparingly.
@@ -2981,7 +3006,7 @@ function Backpack.StartBackpack()
 	if BackpackStarted then return end
 
 	if not LocalPlayer then
-		PlayersService:GetAttributeChangedSignal("LocalPlayer"):Wait()
+		PlayersService:GetPropertyChangedSignal("LocalPlayer"):Wait()
 		
 		LocalPlayer = PlayersService.LocalPlayer
 	end
