@@ -119,6 +119,10 @@ function DraggableObject:Enable()
             if not self.BP:IsInventoryOpen() then return end
         end
 
+        if UserInputService.TouchEnabled then
+            if not self.BP:IsInventoryOpen() then return end
+        end
+
         if not object.Parent.Tool.Value then return end
 
         if MouseOrTouchMovement(input) and preparingToDrag then
@@ -128,8 +132,6 @@ function DraggableObject:Enable()
             if self.DragStarted then
 
                 DraggingObj = object
-
-                print("drag started")
                 
             if GhostObject then GhostObject:Destroy() self.GhostObject = nil end
                 

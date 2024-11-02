@@ -5,87 +5,63 @@
 
 --[[ SERVICES ]]--
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 local StarterGuiService = game:GetService("StarterGui")
 local PlayersService = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
-local TweenService = game:GetService("TweenService")
 
 --[[ MODULES ]]--
+local DragDetector = require(ReplicatedStorage.Lib.UIDrag) -- Unfortantely we cannot use UI drag detectors because they do not play well with buttons at the time of writing this.
 local Spring = require(ReplicatedStorage.Lib.Spring)
 local Signal = require(ReplicatedStorage.Lib.Signal)
-local DragDetector = require(ReplicatedStorage.Lib.UIDrag) -- Unfortantely we cannot use UI drag detectors because they do not play well with buttons at the time of writing this.
 
 --[[ CONSTANTS ]]--
-local Backpack = {}
-local HotbarSlots = {}
 local BackpackSlots = {}
+local HotbarSlots = {}
 local GluedSlots = {}
-local BackpackInstance
+local Backpack = {}
 
 --[[ SETTINGS ]]--
-Backpack.Settings = {}
-Backpack.Settings.MaxHotbarToolSlots = 10
-Backpack.Settings.MaxHeldTools = 1
-Backpack.Settings.USE_SCROLLWHEEL = false
-Backpack.Settings.AutoCalculateMaxToolSlots = true
-Backpack.Settings.MinHotbarSlots = 3
-Backpack.Settings.EquipCooldown = 0.1
-Backpack.Settings.Animate = false
-Backpack.Settings.BackpackButtonOpenedColor = Color3.fromRGB(141, 164, 238)
-Backpack.Settings.UseViewportFrame = false
-Backpack.Settings.DesiredPadding = UDim.new(0, 10)
-Backpack.Settings.SweepInterval = 30
-
-Backpack.Settings.INVENTORY_OPENANDCLOSE_KEYCODES = {
-	Enum.KeyCode.Backquote,
-	Enum.KeyCode.DPadDown,
-}
-
-Backpack.Settings.FASTMOVE_KEYCODES = {
-	Enum.KeyCode.LeftControl,
-	Enum.KeyCode.RightControl,
-	Enum.KeyCode.ButtonY,
-}
-
-Backpack.Settings.GUI_SELECTION_KEYCODES = {
-	Enum.KeyCode.ButtonB,
-	Enum.KeyCode.Return,
-}
+Backpack.Settings = require(script.Settings)
 
 --*/ Don't touch */--
-local Humanoid
+local SlotChangedSignal = Signal.new()
+local ToolTipChangedSignal = Signal.new()
 local LocalPlayer = PlayersService.LocalPlayer
-local Character
-local BackpackIsDisabled = false
-local ScreenGui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("SplashGui")
-local HighlightedTools = {}
-local InventoryFrame
 local MaxSlotsInternal = Backpack.Settings.MaxHotbarToolSlots
-local LastSelectedObj
-local ToolTipFrame
-local NextSweepThread = nil
-local BackpackStarted = false
+local ScreenGui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("SplashGui")
+
 local MaxGluedSlots = 3
-local SelectionUIFrame
-local isSearching = false
-local BPButton
-local BackpackSlotFrame
-local doesHaveEquipCooldown = false
-local lastScrollWheelPosition = nil
-local BPConnection
-local InventoryIsDisabled = false
-local BackgroundTransparency
-local InvCooldown = false
-local InventoryIsOpen = false
+local InvAnimation = 1
+
+local HighlightedTools = {}
 local UISelectedSlots = {}
 local EquippedTools = {}
-local Tweens = {}
 local RemappedSlots = {}
-local SlotChangedSignal = Signal.new()
-local InvAnimation = 1
-local NeededFreeSpace = 480 -- Need at least 480 pixels of free space before we start cutting off tools
+
+local doesHaveEquipCooldown = false
+local InventoryIsDisabled = false
+local BackpackIsDisabled = false
+local InventoryIsOpen = false
+local BackpackStarted = false
+local InvCooldown = false
+local isSearching = false
+
+local lastScrollWheelPosition = nil
+local BackgroundTransparency = nil
+local BackpackSlotFrame = nil
+local BackpackInstance = nil
+local SelectionUIFrame = nil
+local LastSelectedObj = nil
+local NextSweepThread = nil
+local InventoryFrame = nil
+local ToolTipSignal = nil
+local BPConnection = nil
+local ToolTipFrame = nil
+local Character = nil
+local Humanoid = nil
+local BPButton = nil
 
 local KEYBOARD_TRANSLATIONS = {
 	["One"] = 1,
@@ -101,22 +77,25 @@ local KEYBOARD_TRANSLATIONS = {
 }
 
 --[[ PUBLIC CONNECTIONS ]]--
-Backpack.HoverStarted = Signal.new() --> [Instance](Slot)
-Backpack.HoverEnded = Signal.new() --> [Instance](Slot)
-Backpack.ItemAdded = Signal.new() --> [Instance](Slot)
-Backpack.ItemRemoving = Signal.new() --> [Instance](Slot), [Instance](Ghost Slot)
-Backpack.CooldownEnded = Signal.new() --> [Instance](Tool), [Instance](Slot)
 Backpack.InventoryOpened = Signal.new()
 Backpack.InventoryClosed = Signal.new()
 
+Backpack.HoverStarted = Signal.new() --> [Instance](Slot)
+Backpack.HoverEnded = Signal.new() --> [Instance](Slot)
+
+Backpack.ItemRemoving = Signal.new() --> [Instance](Slot), [Instance](Ghost Slot)
+Backpack.ItemAdded = Signal.new() --> [Instance](Slot)
+
+Backpack.CooldownEnded = Signal.new() --> [Instance](Tool), [Instance](Slot)
+
 --[[ FUNCTIONS ]]--
 local spawn = task.spawn
-local wait = task.wait
 local delay = task.delay
 local defer = task.defer
+local wait = task.wait
 
-local rbxwarn = warn
 local rbxerror = error
+local rbxwarn = warn
 
 local function warn(warning)
 	rbxwarn("[BackpackScript]:", warning)
@@ -126,8 +105,11 @@ local function error(err)
 	rbxerror("[BackpackScript]: "..err, 0)
 end
 
+local function isModuleRunning()
+	if not BackpackStarted then error("Call .StartBackpack() before using this method.") end
+end
+
 function SetBackpack(BackpackInst : Backpack)
-	print(BackpackInst.Parent)
 	if typeof(BackpackInst) ~= "Instance" or not BackpackInst:IsA("Backpack") or BackpackInst.Parent ~= LocalPlayer then error("Invalid backpack please don't parent instances named 'Backpack' that aren't actually backpacks to the LocalPlayer.'") end
 	if BackpackInstance then resetBackpack() BackpackInstance:Destroy() end
 	if BPConnection then BPConnection:Disconnect() end
@@ -139,6 +121,14 @@ function SetBackpack(BackpackInst : Backpack)
 		if not Tool:IsA("Tool") then continue end
 
 		newSlot(Tool)
+	end
+
+	if LocalPlayer.Character then
+		for _, Tool in pairs(LocalPlayer.Character:GetChildren()) do
+			if not Tool:IsA("Tool") then continue end
+
+			newSlot(Tool)
+		end
 	end
 end
 
@@ -216,6 +206,7 @@ function HoverStart(ToolSlot) -- <-- Old code but whatever
 	ToolSlot.ToolTipFrame = ToolTipFrame:Clone()
 	ToolSlot.ToolTipFrame.LayoutOrder = 1
 	ToolSlot.ToolTipFrame.Name = "_ToolTip"
+	ToolSlot.ToolTipFrame.Visible = true
 
 	local Frame = create("Frame", {
 		Size = BackpackSlotFrame.Size,
@@ -255,30 +246,64 @@ function HoverStart(ToolSlot) -- <-- Old code but whatever
 
 	local Previous = nil
 	ToolSlot.TipRemoving = nil
+	local TempSignal = os.clock()
 
-	spawn(function()
-		for i,v in ipairs(Text) do
-			if not Previous then Previous = "" end
-			if not ToolSlot or not ToolSlot.ToolTipFrame then return end 
-			if ToolSlot.TipRemoving then return end
+	if ToolTipSignal then ToolTipSignal:Disconnect() end
 
-			local x = "_"
+	local function showToolTip()
+		if Backpack.Settings.Animate == true then
+			spawn(function()
+				local willDisconnect = TempSignal
+				Previous = nil
 
-			if i == #Text then x = "" end
-	
-			ToolSlot.ToolTipFrame.TipText.Text = Previous..v..x
-			Previous = Previous..v
-	
-			wait(.035)
+				for i,v in ipairs(Text) do
+					if not Previous then Previous = "" end
+					if not ToolSlot or not ToolSlot.ToolTipFrame then return end 
+					if ToolSlot.TipRemoving then return end
+					if willDisconnect ~= TempSignal then return end
+		
+					local x = "_"
+		
+					if i == #Text then x = "" end
+			
+					ToolSlot.ToolTipFrame.TipText.Text = Previous..v..x
+					Previous = Previous..v
+			
+					wait(.035)
+				end
+		
+				if ToolSlot and ToolSlot.ToolTipFrame and ToolSlot.Tool then
+					ToolSlot.ToolTipFrame.TipText.Text = ToolTip
+				end
+			end)
+		
+		else
+			if ToolSlot and ToolSlot.ToolTipFrame and ToolSlot.Tool  then
+				ToolSlot.ToolTipFrame.TipText.Text = ToolTip
+			end
 		end
+	end
 
-		ToolSlot.ToolTipFrame.TipText.Text = ToolTip
+	ToolTipSignal = ToolTipChangedSignal:Connect(function(Slot)
+		if Slot == ToolSlot then
+			TempSignal = os.clock()
+			ToolTip = Slot.Tool.ToolTip
+			Text = string.split(ToolTip, "")
+			ToolSlot.ToolTipFrame.TipText.Text = ""
+
+            if ToolTip == "" then HoverEnd(Slot) return end
+            
+			showToolTip()
+		end
 	end)
+
+	showToolTip()
 
 end
 
 function HoverEnd(ToolSlot)
 	if not ToolSlot.ToolTipFrame then return end
+
 	Animate(ToolSlot.ToolTipFrame.TipText, "BackgroundTransparency", 1, 1, 11)
 	Animate(ToolSlot.ToolTipFrame.TipText.UIStroke, "Transparency", 1, 1, 11)
 	Animate(ToolSlot.ToolTipFrame.TipText, "TextTransparency", 1, 1, 11)
@@ -286,6 +311,8 @@ function HoverEnd(ToolSlot)
 
 	local ToolFrame = ToolSlot.ToolTipFrame
 	ToolSlot.TipRemoving = true
+
+	if ToolTipSignal then ToolTipSignal:Disconnect() end
 
 	if Backpack.Settings.Animate == true then
 		Spring.completed(ToolSlot.ToolTipFrame.TipText, function()
@@ -474,12 +501,12 @@ function nameUpdate(ToolSlot)
 end
 
 function toolTipUpdate(ToolSlot)
-	ToolTipFrame.TipText.Text = ToolSlot.Tool.ToolTip
+	ToolTipChangedSignal:Fire(ToolSlot)
 end
 
 function CalculateMaxToolSlots()
 	if Backpack.Settings.AutoCalculateMaxToolSlots then
-		return math.clamp(math.round((workspace.CurrentCamera.ViewportSize.X - NeededFreeSpace) / (BackpackSlotFrame.AbsoluteSize.X + Backpack.Settings.DesiredPadding.Offset)), Backpack.Settings.MinHotbarSlots, MaxSlotsInternal)
+		return math.clamp(math.round((workspace.CurrentCamera.ViewportSize.X - Backpack.Settings.NeededFreeSpace) / (BackpackSlotFrame.AbsoluteSize.X + Backpack.Settings.DesiredPadding.Offset)), Backpack.Settings.MinHotbarSlots, MaxSlotsInternal)
 	else
 		return Backpack.Settings.MaxHotbarToolSlots
 	end
@@ -957,7 +984,6 @@ function SetBarTransparency(Bar, Transparency, time)
 				Spring.stop(ImageFrame, "ImageTransparency")
 				ImageFrame.ImageTransparency = Transparency
 			else
-				print('set '..Transparency)
 				Animate(ImageFrame, "ImageTransparency", Transparency, realtime, 8.3)
 			end
 		end
@@ -1135,6 +1161,8 @@ function BuildGui()
 
 	BackgroundTransparency = BPButton.ImageButton.BackgroundColor3
 
+	if not BackpackIsDisabled then ScreenGui.Enabled = true end
+
 	for i = 1, Backpack.Settings.MaxHotbarToolSlots do
 		table.insert(HotbarSlots, {
 			Frame = nil,
@@ -1221,6 +1249,8 @@ function BuildGui()
 		}
 	})
 
+    InventoryFrame.Background.ScrollingFrame.UIListLayout.Padding = Backpack.Settings.DesiredPadding
+
 
 	InventoryFrame.TextBox:GetPropertyChangedSignal("Text"):Connect(function()
 		local Text = InventoryFrame.TextBox.Text
@@ -1269,6 +1299,10 @@ function BuildGui()
 					Spring.completed(NewSlot, function()
 						Completed = true
 					end)
+				else
+					Completed = true
+                    CalculateInventoryButtonPosition()
+                    CalculateGluedSlotPosition()
 				end
 
 				defer(function()
@@ -1516,7 +1550,7 @@ function refreshSlot(Slot, PrevSlot)
 
 				Slot.Loaded = true
 			end
-
+            
 			CalculateGluedSlotPosition()
 			CalculateInventoryButtonPosition()
 		end)
@@ -1798,11 +1832,7 @@ function findTakenInventorySlot(slot, Direction)
 end
 
 function TranslateInput(InputObject : InputObject)
-	if InputObject.UserInputType == Enum.UserInputType.Keyboard then
-		if KEYBOARD_TRANSLATIONS[InputObject.KeyCode.Name] then
-			return tonumber(KEYBOARD_TRANSLATIONS[InputObject.KeyCode.Name])
-		end
-	elseif InputObject.UserInputType == Enum.UserInputType.MouseWheel and Backpack.Settings.USE_SCROLLWHEEL == true or InputObject.KeyCode == Enum.KeyCode.ButtonR1 or InputObject.KeyCode == Enum.KeyCode.ButtonL1 then
+	if InputObject.UserInputType == Enum.UserInputType.MouseWheel and Backpack.Settings.USE_SCROLLWHEEL == true or table.find(Backpack.Settings.CYCLE_LEFT_KEYCODES, InputObject.KeyCode) or table.find(Backpack.Settings.CYCLE_RIGHT_KEYCODES, InputObject.KeyCode) then
 		local MouseLocation = UserInputService:GetMouseLocation()
 
 		if table.find(LocalPlayer.PlayerGui:GetGuiObjectsAtPosition(MouseLocation.X + GuiService:GetGuiInset().X, MouseLocation.Y - GuiService:GetGuiInset().Y), InventoryFrame) then return end -- Cancel it if they are currently scrolling in their inventory.
@@ -1816,15 +1846,12 @@ function TranslateInput(InputObject : InputObject)
 				Direction = -1
 			end
 		end
-
-		if InputObject.UserInputType.Name:match("Gamepad") then
-			if InputObject.KeyCode == Enum.KeyCode.ButtonR1 then
-				Direction = 1
-			else
-				Direction = -1
-			end
-		end
-
+       
+        if table.find(Backpack.Settings.CYCLE_LEFT_KEYCODES, InputObject.KeyCode) then
+            Direction = -1
+        elseif table.find(Backpack.Settings.CYCLE_RIGHT_KEYCODES, InputObject.KeyCode) then
+            Direction = 1
+        end
 
 		if lastScrollWheelPosition then
 
@@ -1857,7 +1884,11 @@ function TranslateInput(InputObject : InputObject)
 
 
 		end
-	end
+	elseif InputObject.UserInputType == Enum.UserInputType.Keyboard then
+		if KEYBOARD_TRANSLATIONS[InputObject.KeyCode.Name] then
+			return tonumber(KEYBOARD_TRANSLATIONS[InputObject.KeyCode.Name])
+	    end
+    end
 end
 
 function deleteToolSlotData(ToolSlot)
@@ -1965,7 +1996,15 @@ function revealSlots(State)
 				Slot.Frame.Button.ToolImage.Visible = false
 				Slot.Frame.Button.ToolName.Visible = false
 
-				Slot.Frame.Button.ToolNum.Text = i
+                local use
+
+		        if i == 10 then 
+			        use = 0
+		        end
+
+		        local using = use or i
+
+				Slot.Frame.Button.ToolNum.Text = using
 
 				Slot.Frame.Button.ToolNum.Visible = true
 			end
@@ -2001,6 +2040,7 @@ function revealSlots(State)
 end
 
 function Backpack:MapKeybind(SlotNumber : number, Keycode : Enum.KeyCode)
+	isModuleRunning()
 	if typeof(SlotNumber) ~= "number" then error("Argument 1 is not of type: number") end
 	if typeof(Keycode) ~= "EnumItem" then error("Argument 2 is not of type: EnumItem") end
 	if Keycode.EnumType ~= Enum.KeyCode then error("Argument 2 must be a keycode enum type.") end
@@ -2009,6 +2049,7 @@ function Backpack:MapKeybind(SlotNumber : number, Keycode : Enum.KeyCode)
 end
 
 function Backpack:UnmapKeybind(SlotNumber : number)
+	isModuleRunning()
 	if typeof(SlotNumber) ~= "number" then error("Argument 1 is not of type: number") end
 
 	if RemappedSlots[SlotNumber] then
@@ -2017,6 +2058,7 @@ function Backpack:UnmapKeybind(SlotNumber : number)
 end
 
 function Backpack:Equip(ToolOrSlot, Generic : boolean)
+	isModuleRunning()
 	if BackpackIsDisabled then return end
 	if not Character then return end
 	if not Character:IsDescendantOf(workspace) then return end
@@ -2091,6 +2133,7 @@ function Backpack:IsInventoryOpen()
 end
 
 function Backpack:OpenInventory()
+	isModuleRunning()
 	if BackpackIsDisabled then return end
 	if InventoryIsOpen then return end
 	if InvCooldown then return end
@@ -2157,6 +2200,7 @@ function Backpack:OpenInventory()
 end
 
 function Backpack:CloseInventory()
+	isModuleRunning()
 	if BackpackIsDisabled then return end
 	if not InventoryIsOpen then return end
 	if InvCooldown then return end
@@ -2230,6 +2274,7 @@ function Backpack:CloseInventory()
 end
 
 function Backpack:MoveToolToHotbarSlotNumber(Tool, SlotNumber: number, fromPosition)
+	isModuleRunning()
 	if typeof(SlotNumber) ~= "number" then error("Argument 1 is not of type: number") end
 	if SlotNumber > Backpack.Settings.MaxHotbarToolSlots then warn("Not moving slot because number is bigger than tool max.") return end
 	Tool = convert(Tool, 1)
@@ -2289,12 +2334,20 @@ function Backpack:MoveToolToHotbarSlotNumber(Tool, SlotNumber: number, fromPosit
 
 	Animate(GhostSlot, "Position", UDim2.fromOffset(AbsPos.X + GuiService:GetGuiInset().X, AbsPos.Y + GuiService:GetGuiInset().Y), 1, 6)
 
-	Spring.completed(GhostSlot, function()
-		if TargetSlot.Tool == Tool then
-			TargetSlot.Frame.Button.Visible = true
-		end
-		GhostSlot:Destroy()
-	end)
+    if Backpack.Settings.Animate == true then
+        Spring.completed(GhostSlot, function()
+            if TargetSlot.Tool == Tool then
+                TargetSlot.Frame.Button.Visible = true
+            end
+            GhostSlot:Destroy()
+        end) 
+    else
+        if TargetSlot.Tool == Tool then
+            TargetSlot.Frame.Button.Visible = true
+        end
+
+        GhostSlot:Destroy()
+    end
 
 	return TargetSlot
 end
@@ -2362,37 +2415,46 @@ function Backpack:MoveToolToInventory(Tool: Tool, fromPosition: UDim2)
 			6
 		)
 
-		spawn(function()
-			while GhostSlot.Parent do
-
-				if isClipped(GhostSlot, InventoryFrame) then
-					GhostSlot.Visible = false
-				else
-					GhostSlot.Visible = true
-				end
-
-				wait()
-			end
-		end)
+        if Backpack.Settings.Animate == true then
+            spawn(function()
+                while GhostSlot.Parent do
+    
+                    if isClipped(GhostSlot, InventoryFrame) then
+                        GhostSlot.Visible = false
+                    else
+                        GhostSlot.Visible = true
+                    end
+    
+                    wait()
+                end
+            end) 
+        end
 
 		revealSlots(true)
 
 		TargetSlot.Frame.Button.Visible = false
 
-		Spring.completed(GhostSlot, function()
-			if TargetSlot.Tool == Tool then -- This may make it safe.
-			
-				TargetSlot.Frame.Button.Visible = true
-			end
+        if Backpack.Settings.Animate == true then
+            Spring.completed(GhostSlot, function()
+                if TargetSlot.Tool == Tool then -- This may make it safe.
+                
+                    TargetSlot.Frame.Button.Visible = true
+                end
+    
+                GhostSlot:Destroy()
+            end)            
+        else
+            GhostSlot:Destroy()
+            TargetSlot.Frame.Button.Visible = true
+        end
 
-			GhostSlot:Destroy()
-		end)
 	end
 
 	return TargetSlot
 end
 
 function Backpack:MoveToolToHotbar(Tool : Tool, fromPosition : UDim2)
+	isModuleRunning()
 	Tool = convert(Tool, 1)
 
 	if not Tool then
@@ -2466,17 +2528,23 @@ function Backpack:MoveToolToHotbar(Tool : Tool, fromPosition : UDim2)
 
 	Animate(GhostSlot, "Position", UDim2.fromOffset(AbsPos.X + GuiService:GetGuiInset().X, AbsPos.Y + GuiService:GetGuiInset().Y), 1, 6)
 
-	Spring.completed(GhostSlot, function()
-		if TargetSlot.Tool == Tool then -- This may make it safe.
-		refreshSlot(TargetSlot)
-		end
-		GhostSlot:Destroy()
-	end)
+    if Backpack.Settings.Animate == true then
+        Spring.completed(GhostSlot, function()
+            if TargetSlot.Tool == Tool then 
+                refreshSlot(TargetSlot) -- i forgot why i added this but im just keeping it cause idk what might happen
+            end
+            GhostSlot:Destroy()
+        end) 
+    else
+        GhostSlot:Destroy()
+        refreshSlot(TargetSlot)
+    end
 
 	return TargetSlot
 end
 
 function Backpack:SwapTools(Tool1, Tool2)
+	isModuleRunning()
 
 	Tool1 = convert(Tool1, 1)
 	Tool2 = convert(Tool2, 2)
@@ -2535,7 +2603,7 @@ function Backpack:SwapTools(Tool1, Tool2)
 		end -- Hotfix for fixing highlights
 	end
 
-	if Backpack.Settings.Animate == false then return end
+	if Backpack.Settings.Animate == false then refreshSlot(Slot1) refreshSlot(Slot2) return end
 
 	if Slot1.Position > Backpack.Settings.MaxHotbarToolSlots then
 		Tool1Type = "BP"
@@ -2585,18 +2653,32 @@ function Backpack:SwapTools(Tool1, Tool2)
 		Animate(GhostSlot1, "Position", Pos2, 1, 6)
 		Animate(GhostSlot2, "Position", Pos1, 1, 6)
 
-		delay(.16, function() -- // TODO maybe not safe
-			Slot1.Frame.Button.Visible = true
-			Slot2.Frame.Button.Visible = true
-
-			GhostSlot1.Visible = false
-			GhostSlot2.Visible = false
-		end)
-
-		Spring.completed(GhostSlot1, function()
-			GhostSlot1:Destroy()
-			GhostSlot2:Destroy()
-		end)
+        if Backpack.Settings.Animate == true then
+            delay(.16, function()
+                if Slot1.Tool == Clone2.Tool then 
+                    Slot1.Frame.Button.Visible = true
+                end
+    
+                if Slot2.Tool == Clone1.Tool then
+                    Slot2.Frame.Button.Visible = true 
+                end
+    
+                GhostSlot1.Visible = false
+                GhostSlot2.Visible = false
+            end)
+    
+            Spring.completed(GhostSlot1, function()
+                GhostSlot1:Destroy()
+                GhostSlot2:Destroy()
+            end) 
+        else
+            Slot1.Frame.Button.Visible = true
+            Slot2.Frame.Button.Visible = true 
+            GhostSlot1.Visible = false
+            GhostSlot2.Visible = false
+            GhostSlot1:Destroy()
+            GhostSlot2:Destroy()
+        end
 	end
 
 	local function specialSwap(main, BPSlot)
@@ -2639,16 +2721,25 @@ function Backpack:SwapTools(Tool1, Tool2)
 		Animate(GhostSlot1.Group, "GroupTransparency", 1, Damping, Ratio)
 		Animate(GhostSlot2, "Size", OrgSize, Damping, Ratio)
 
-		delay(.32, function()
-			main.Frame.Button.Visible = true
-			GhostSlot1.Visible = false
-			GhostSlot2.Visible = false
-		end)
+        if Backpack.Settings.Animate == true then
+            delay(.32, function()
+                main.Frame.Button.Visible = true
+                GhostSlot1.Visible = false
+                GhostSlot2.Visible = false
+            end)
+    
+            Spring.completed(GhostSlot1, function()
+                GhostSlot1:Destroy()
+                GhostSlot2:Destroy()
+            end)
+        else
+            main.Frame.Button.Visible = true
+            GhostSlot1.Visible = false
+            GhostSlot2.Visible = false
+            GhostSlot1:Destroy()
+            GhostSlot2:Destroy()
+        end
 
-		Spring.completed(GhostSlot1, function()
-			GhostSlot1:Destroy()
-			GhostSlot2:Destroy()
-		end)
 	end
 
 	if inBP and not inHB then
@@ -2699,6 +2790,7 @@ function Backpack:PopNotificationIcon(State : boolean)
 end
 
 function Backpack:UnequipTools() -- Unequips non glued tools
+	isModuleRunning()
 	if not Character then return end
 
 	for Tool, ToolData in pairs(EquippedTools) do
@@ -2745,6 +2837,7 @@ function Backpack:GetTools()
 end
 
 function Backpack:GetSlotFromTool(Tool : Tool)
+	isModuleRunning()
 	if typeof(Tool) ~= "Instance" then error("Argument one is not of type: Instance") end
 	if not Tool:IsA("Tool") then error("Argument 1 is not a tool.") end
 
@@ -2769,6 +2862,7 @@ function Backpack:GetSlotFromTool(Tool : Tool)
 end
 
 function Backpack:GetSlotFromNumber(Number : number)
+	isModuleRunning()
 	if typeof(Number) ~= "number" then error("Argument 1 is not of type: number") end
 	if Number % 1 ~= 0 then error("Argument 1 must be a integer (whole number)") end
 
@@ -2798,6 +2892,7 @@ function Backpack:GetSlotFromNumber(Number : number)
 end
 
 function Backpack:GetHotbarTools()
+	isModuleRunning()
 	local Tools = {}
 
 	for _, Slot in ipairs(HotbarSlots) do
@@ -2810,6 +2905,7 @@ function Backpack:GetHotbarTools()
 end
 
 function Backpack:GetInventoryTools()
+	isModuleRunning()
 	local Tools = {}
 
 	for _, Slot in ipairs(BackpackSlots) do
@@ -2822,6 +2918,7 @@ function Backpack:GetInventoryTools()
 end
 
 function Backpack:SetViewportEnabled(ToolOrSlot, boolean : boolean)
+	isModuleRunning()
 	if typeof(boolean) ~= "boolean" then error("Argument 1 is not of type: boolean") end
 
 	local Tool = convert(ToolOrSlot, 2)
@@ -2832,6 +2929,7 @@ function Backpack:SetViewportEnabled(ToolOrSlot, boolean : boolean)
 end
 
 function Backpack:SetViewportOffset(ToolOrSlot, OffsetCFrame : CFrame)
+	isModuleRunning()
 	if typeof(OffsetCFrame) ~= "CFrame" then error("Argument 1 is not of type: CFrame") end
 
 	local Tool = convert(ToolOrSlot, 2)
@@ -2842,6 +2940,7 @@ function Backpack:SetViewportOffset(ToolOrSlot, OffsetCFrame : CFrame)
 end
 
 function Backpack:GlueTool(ToolOrSlot)
+	isModuleRunning()
 	if not LocalPlayer.Character then return end
 
 	local Tool = convert(ToolOrSlot, 1)
@@ -2867,6 +2966,7 @@ function Backpack:GlueTool(ToolOrSlot)
 end
 
 function Backpack:RemoveGlue(ToolOrSlot)
+	isModuleRunning()
 	if not LocalPlayer.Character then return end
 
 	local Tool = convert(ToolOrSlot, 1)
@@ -2879,17 +2979,19 @@ function Backpack:RemoveGlue(ToolOrSlot)
 end
 
 function Backpack:DisableInventory()
+	isModuleRunning()
 	InventoryIsDisabled = true
 	BPButton.Visible = false
 
 	spawn(function()
 		if InvCooldown then repeat wait() until not InvCooldown end
 
-		if InventoryIsOpen then  Backpack:CloseInventory() end
+		if InventoryIsOpen then Backpack:CloseInventory() end
 	end)
 end
 
 function Backpack:EnableInventory()
+	isModuleRunning()
 	InventoryIsDisabled = false
 
 	BPButton.Visible = true
@@ -2900,6 +3002,7 @@ function Backpack:GetInventoryEnabled()
 end
 
 function Backpack:LockTool(ToolOrSlot) -- Prevents a tool from being equipped
+	isModuleRunning()
 	local Tool = convert(ToolOrSlot, 1)	
 	
 	local Slot = Backpack:GetSlotFromTool(Tool)
@@ -2909,6 +3012,7 @@ function Backpack:LockTool(ToolOrSlot) -- Prevents a tool from being equipped
 end
 
 function Backpack:UnlockTool(ToolOrSlot)
+	isModuleRunning()
 	local Tool = convert(ToolOrSlot, 1)	
 	
 	local Slot = Backpack:GetSlotFromTool(Tool)
@@ -2939,6 +3043,7 @@ function Backpack:GetEnabled()
 end
 
 function Backpack:SetCooldown(Tool, Seconds: number)
+	isModuleRunning()
 	local Tool = convert(Tool)
 
 	if not Tool then return end
@@ -3046,6 +3151,10 @@ function Backpack.StartBackpack()
 	Backpack.HoverStarted:Connect(function(Frame)
 		if not Frame.Tool.Value then return end 
 		if Frame.Tool.Value.ToolTip == "" then return end
+
+        if UserInputService.TouchEnabled then
+            if not InventoryIsOpen then return end
+        end
 
 		local Slot = Backpack:GetSlotFromTool(Frame.Tool.Value)
 
@@ -3182,12 +3291,13 @@ function Backpack.StartBackpack()
 				Slot = Slot or Backpack:GetSlotFromTool(Target.Value)
 	
 				table.insert(UISelectedSlots, Slot)
+
 	
 				if #UISelectedSlots > 1 then
 					local Slot1, Slot2 = clearUIHighlights()
 	
 					if Slot1 == Slot2 then return end
-					if not Slot1.Tool or not Slot2.Tool then return end
+					if not Slot1.Tool then return end
 
 					if Slot1.Tool and not Slot2.Tool then
 						if #Backpack:GetHotbarTools() >= Backpack.Settings.MaxHotbarToolSlots then return end
@@ -3291,6 +3401,8 @@ function Backpack.StartBackpack()
 	setCanUIHighlight(false)
 	WindowSizeChanged()
 	scheduleNextInternalSweep()
+    CalculateInventoryButtonPosition()
+    CalculateGluedSlotPosition()
 	
 	LocalPlayer.CharacterAdded:Connect(CharacterAdded)
 	
