@@ -54,12 +54,11 @@ end
 	end)
 end]]
 
-
-task.wait(2)
-
-for i = 1, 60 do
-	local to = Instance.new("Tool")
-	to.Name = i
+PlayersService.PlayerAdded:Connect(function(player)
+	player.CharacterAdded:Connect(function()
+		local to = Instance.new("Tool")
+		to.Name = "i"
 	
-	to.Parent = game.Players:GetPlayers()[1].Character
-end
+		to.Parent = player.Backpack
+	end)
+end)

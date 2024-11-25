@@ -12,9 +12,9 @@ local RunService = game:GetService("RunService")
 local GuiService = game:GetService("GuiService")
 
 --[[ MODULES ]]--
-local DragDetector = require(ReplicatedStorage.Lib.UIDrag) -- Unfortantely we cannot use UI drag detectors because they do not play well with buttons at the time of writing this.
 local Spring = require(ReplicatedStorage.Lib.Spring)
 local Signal = require(ReplicatedStorage.Lib.Signal)
+local DragDetector = require(ReplicatedStorage.Lib.UIDrag) -- Unfortantely we cannot use UI drag detectors because they do not play well with buttons at the time of writing this.
 
 --[[ CONSTANTS ]]--
 local BackpackSlots = {}
@@ -23,14 +23,15 @@ local GluedSlots = {}
 local Backpack = {}
 
 --[[ SETTINGS ]]--
-Backpack.Settings = require(script.Settings)
+Backpack.Settings = require(script.BackpackSettings)
 
 --*/ Don't touch */--
 local SlotChangedSignal = Signal.new()
 local ToolTipChangedSignal = Signal.new()
 local LocalPlayer = PlayersService.LocalPlayer
 local MaxSlotsInternal = Backpack.Settings.MaxHotbarToolSlots
-local ScreenGui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("SplashGui")
+local ScreenGui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("Backpack")
+local BackpackGui = ScreenGui.BackpackGui
 
 local MaxGluedSlots = 3
 local InvAnimation = 1
@@ -47,6 +48,7 @@ local InventoryIsOpen = false
 local BackpackStarted = false
 local InvCooldown = false
 local isSearching = false
+local Locked = false
 
 local lastScrollWheelPosition = nil
 local BackgroundTransparency = nil
@@ -159,6 +161,20 @@ function zoomToExtents(camera, instance) -- ty thegamer101
 	camera.Focus = cameraRotation + instancePosition
 end
 
+function advanceCanvasToPosition(ScrollingFrame: ScrollingFrame, GuiObject: GuiObject)
+	local scrollingframeabs = ScrollingFrame.AbsolutePosition
+	local currentCanvasPosition = ScrollingFrame.CanvasPosition
+	local guiObjectAbsolutePosition = GuiObject.AbsolutePosition
+
+	local difference = guiObjectAbsolutePosition - scrollingframeabs
+
+	local prev = ScrollingFrame.CanvasPosition
+
+	ScrollingFrame.CanvasPosition += difference
+
+	return prev
+end
+
 function isToolRegistered(Tool)
 	for _, Slot in pairs(HotbarSlots) do
 		if Slot.Tool == Tool then
@@ -212,7 +228,7 @@ function HoverStart(ToolSlot) -- <-- Old code but whatever
 		Size = BackpackSlotFrame.Size,
 		AnchorPoint = BackpackSlotFrame.AnchorPoint,
 		BackgroundTransparency = 1,
-		Parent = ScreenGui.ToolTips,
+		Parent = BackpackGui.ToolTips,
 		["Children"] = {
 			create("Frame", {
 				Size = UDim2.fromOffset(1,1),
@@ -395,10 +411,12 @@ function onParentUpdate(Tool, Parent, ForceRemove)
 
 		ToolSlot.Loaded = false
 
+		deleteToolSlotData(ToolSlot)
+
 		GhostSlot.Name = "_Ghost"
 		GhostSlot.Visible = true
 		GhostSlot.Button.Parent = GhostSlot.Group
-		GhostSlot.Parent = ScreenGui.BackpackMain
+		GhostSlot.Parent = BackpackGui.BackpackMain
 
 		if EquippedTools[Tool] then
 			EquippedTools[Tool] = nil
@@ -415,6 +433,8 @@ function onParentUpdate(Tool, Parent, ForceRemove)
 			else
 				GhostSlot:Destroy()
 			end
+
+			if InventoryIsOpen then revealSlots(true) end
 		else
 			ToolSlot.Frame.Group.GroupTransparency = 1
 			ToolSlot.Frame.Button.Visible = false
@@ -427,7 +447,7 @@ function onParentUpdate(Tool, Parent, ForceRemove)
 			GhostSlot.Position = UDim2.fromOffset(ToolSlot.Frame.AbsolutePosition.X + GuiService:GetGuiInset().X, ToolSlot.Frame.AbsolutePosition.Y + GuiService:GetGuiInset().Y)
 
 			delay(.35, function()
-				if not ToolSlot.Frame.Tool.Value then
+				if not ToolSlot.Frame.Tool.Value and InventoryIsOpen then
 					ToolSlot.Frame.Visible = false
 				end
 			end)
@@ -442,6 +462,7 @@ function onParentUpdate(Tool, Parent, ForceRemove)
 			else
 				GhostSlot:Destroy()
 			end
+
 		end
 	end
 end
@@ -472,6 +493,21 @@ function resetBackpack()
 		end
 
 	end
+
+	for _, ToolSlot in pairs(GluedSlots) do
+		local Tool = ToolSlot.Tool 
+
+		if Tool then
+			onParentUpdate(Tool, nil, true)
+		end
+
+		for _, Connection in pairs(ToolSlot.Connections) do 
+			Connection:Disconnect()
+		end
+
+	end
+
+	
 
 	for _, Highlight in pairs(HighlightedTools) do
 		Highlight.Highlight:Destroy()
@@ -633,7 +669,7 @@ function newSlot(Tool : Tool, BPSlot, SlotNum)
 					end
 				end
 
-				if isOneKeyDown and InventoryIsOpen then
+				if isOneKeyDown and InventoryIsOpen and Backpack.Settings.CanOrganize then
 					local NewPosition = UDim2.fromOffset(newSlot.Frame.Button.AbsolutePosition.X  + (newSlot.Frame.Button.AbsoluteSize.X / 2), (newSlot.Frame.Button.AbsolutePosition.Y + (newSlot.Frame.Button.AbsoluteSize.Y / 2)))
 
 					if newSlot.Position <= Backpack.Settings.MaxHotbarToolSlots then
@@ -665,7 +701,7 @@ function newSlot(Tool : Tool, BPSlot, SlotNum)
 						if Slot.Position > Backpack.Settings.MaxHotbarToolSlots then
 							Highlight.Highlight.Parent = InventoryFrame.Parent
 						else
-							Highlight.Highlight.Parent = ScreenGui.BackpackMain
+							Highlight.Highlight.Parent = BackpackGui.BackpackMain
 						end
 
 						Highlight.Highlight.Position = UDim2.fromOffset(newSlot.Frame.AbsolutePosition.X + GuiService:GetGuiInset().X, newSlot.Frame.AbsolutePosition.Y + GuiService:GetGuiInset().Y)
@@ -707,7 +743,7 @@ function newSlot(Tool : Tool, BPSlot, SlotNum)
 	end
 
 	if not ToolSlot.Dragger then
-		ToolSlot.Dragger = DragDetector.new(ToolSlot, ScreenGui.BackpackMain, Backpack.Settings.FASTMOVE_KEYCODES, Backpack)
+		ToolSlot.Dragger = DragDetector.new(ToolSlot, BackpackGui.BackpackMain, Backpack.Settings.FASTMOVE_KEYCODES, Backpack)
 
 	ToolSlot.Dragger:Enable()
 
@@ -732,7 +768,7 @@ function newSlot(Tool : Tool, BPSlot, SlotNum)
 		local GuiObjects = LocalPlayer.PlayerGui:GetGuiObjectsAtPosition(Pos.X.Offset, Pos.Y.Offset)
 
 		for _, Gui in pairs(GuiObjects) do -- // For swapping
-			if not tonumber(Gui.Name) or not Gui:IsDescendantOf(ScreenGui.BackpackMain) then continue end
+			if not tonumber(Gui.Name) or not Gui:IsDescendantOf(BackpackGui.BackpackMain) then continue end
 
 			local ToolValue = Gui:FindFirstChildWhichIsA("ObjectValue")
 
@@ -752,6 +788,10 @@ function newSlot(Tool : Tool, BPSlot, SlotNum)
 				if not ToolValue then return end
 
 				local SlotNum = tonumber(ToolValue.Parent.Button.ToolNum.Text)
+
+				if SlotNum == 0 then
+					SlotNum = 10
+				end
 
 				Backpack:MoveToolToHotbarSlotNumber(ToolSlot.Tool, SlotNum, Pos)
 				revealSlots(true)
@@ -785,7 +825,7 @@ function newSlot(Tool : Tool, BPSlot, SlotNum)
 
 		defer(function()
 			if not ToolSlot.Loaded then
-				while ToolSlot.PlacementSlot.AbsolutePosition.Y ~= ScreenGui.BackpackMain.HotbarContainer.AbsolutePosition.Y do
+				while ToolSlot.PlacementSlot.AbsolutePosition.Y ~= BackpackGui.BackpackMain.HotbarContainer.AbsolutePosition.Y do
 					wait() -- Need to wait for the UIListLayout to calculate the position
 				end
 
@@ -1054,7 +1094,7 @@ function MoveEquipBar(FrameSlot, DisabledFrame, time)
 
 			NewUISection.Position = UDim2.fromOffset(FrameSlot.Frame.AbsolutePosition.X + GuiService:GetGuiInset().X, FrameSlot.Frame.AbsolutePosition.Y + GuiService:GetGuiInset().Y)
 		else
-			NewUISection.Parent = ScreenGui.BackpackMain
+			NewUISection.Parent = BackpackGui.BackpackMain
 		end
 
 		table.insert(HighlightedTools, {
@@ -1080,10 +1120,10 @@ function MoveEquipBar(FrameSlot, DisabledFrame, time)
 				if FrameSlot.Frame.Parent == InvParent then
 					Highlight.Highlight.Parent = InventoryFrame.Parent
 				else
-					Highlight.Highlight.Parent = ScreenGui.BackpackMain
+					Highlight.Highlight.Parent = BackpackGui.BackpackMain
 				end
 
-				if Highlight.Highlight.Parent == ScreenGui.BackpackMain then
+				if Highlight.Highlight.Parent == BackpackGui.BackpackMain then
 					Highlight.Highlight.Visible = true
 				end
 
@@ -1124,10 +1164,10 @@ function MoveEquipBar(FrameSlot, DisabledFrame, time)
 				HighlightedTools[i].Frame = FrameSlot.Frame
 				HighlightedTools[i].Tool = FrameSlot.Tool
 
-				if FrameSlot.Frame.Parent ~= ScreenGui.BackpackMain then
+				if FrameSlot.Frame.Parent ~= BackpackGui.BackpackMain then
 					Highlight.Highlight.Parent = InventoryFrame.Parent
 				else
-					Highlight.Highlight.Parent = ScreenGui.BackpackMain
+					Highlight.Highlight.Parent = BackpackGui.BackpackMain
 				end
 
 				SetBarTransparency(Highlight.Highlight, 0)
@@ -1147,21 +1187,27 @@ end
 function BuildGui()
 	StarterGuiService:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
 
-	InventoryFrame = ScreenGui.InventoryMain:Clone() -- ok shut up we're doing something cool here
-	ToolTipFrame = ScreenGui.ToolTip:Clone()
-	SelectionUIFrame = ScreenGui.SelectionUI:Clone()
-	BackpackSlotFrame = ScreenGui.BackpackSlot:Clone()
-	BPButton = ScreenGui.BackpackButton:Clone()
+	InventoryFrame = BackpackGui.InventoryMain:Clone() -- ok shut up we're doing something cool here
+	ToolTipFrame = BackpackGui.ToolTip:Clone()
+	SelectionUIFrame = BackpackGui.SelectionUI:Clone()
+	BackpackSlotFrame = BackpackGui.BackpackSlot:Clone()
+	BPButton = BackpackGui.BackpackButton:Clone()
 
-	ScreenGui.InventoryMain:Destroy()
-	ScreenGui.SelectionUI:Destroy()
-	ScreenGui.ToolTip:Destroy()
-	ScreenGui.BackpackSlot:Destroy()
-	ScreenGui.BackpackButton:Destroy()
+	BackpackGui.InventoryMain:Destroy()
+	BackpackGui.SelectionUI:Destroy()
+	BackpackGui.ToolTip:Destroy()
+	BackpackGui.BackpackSlot:Destroy()
+	BackpackGui.BackpackButton:Destroy()
+
+	BPButton.Visible = false
+	BackpackSlotFrame.Visible = false
+	SelectionUIFrame.Visible = false
+	ToolTipFrame.Visible = false
+	InventoryFrame.Visible = false
 
 	BackgroundTransparency = BPButton.ImageButton.BackgroundColor3
 
-	if not BackpackIsDisabled then ScreenGui.Enabled = true end
+	if not BackpackIsDisabled then BackpackGui.Visible = true end
 
 	for i = 1, Backpack.Settings.MaxHotbarToolSlots do
 		table.insert(HotbarSlots, {
@@ -1201,7 +1247,7 @@ function BuildGui()
 		Size = UDim2.fromScale(1,1),
 		BackgroundTransparency = 1,
 		Visible = true,
-		Parent = ScreenGui,
+		Parent = BackpackGui,
 		["Children"] = {
 
 			create("Frame", {
@@ -1325,7 +1371,7 @@ function BuildGui()
 								if HotbarSlots[i].Position > Backpack.Settings.MaxHotbarToolSlots then
 									Highlight.Highlight.Parent = InventoryFrame.Parent
 								else
-									Highlight.Highlight.Parent = ScreenGui.BackpackMain
+									Highlight.Highlight.Parent = BackpackGui.BackpackMain
 								end
 
 								local TargetPosition = PlacementFrame.AbsolutePosition
@@ -1358,7 +1404,7 @@ function BuildGui()
 					end
 				end
 
-			if isOneKeyDown and InventoryIsOpen then
+			if isOneKeyDown and InventoryIsOpen and Backpack.Settings.CanOrganize then
 				local NewPosition = UDim2.fromOffset(NewSlot.Button.AbsolutePosition.X  + (NewSlot.Button.AbsoluteSize.X / 2), (NewSlot.Button.AbsolutePosition.Y + (NewSlot.Button.AbsoluteSize.Y / 2)))
 
 				if HotbarSlots[i].Position <= Backpack.Settings.MaxHotbarToolSlots then
@@ -1458,9 +1504,7 @@ function BuildGui()
 		BPButton.Visible = true
 	end
 
-	BPButton.Parent = ScreenGui
-
-	ScreenGui.Enabled = true
+	BPButton.Parent = BackpackGui
 
 	Backpack:PopNotificationIcon(false)
 
@@ -1469,7 +1513,7 @@ function BuildGui()
 		Position = UDim2.fromScale(0,0),
 		BackgroundTransparency = 1,
 		Name = "ToolTips",
-		Parent = ScreenGui,
+		Parent = BackpackGui,
 	})
 end
 
@@ -1487,7 +1531,7 @@ function CalculateInventoryButtonPosition()
 	end
 
 	if not Max then 
-		BPButton.Position = UDim2.new(0.5, 0, 0, ScreenGui.BackpackMain.HotbarContainer.AbsolutePosition.Y + (BackpackSlotFrame.Size.Y.Offset * 1.5))
+		BPButton.Position = UDim2.new(0.5, 0, 0, BackpackGui.BackpackMain.HotbarContainer.AbsolutePosition.Y + (BackpackSlotFrame.Size.Y.Offset * 1.5))
 		return
 	end
 
@@ -1509,13 +1553,13 @@ function CalculateGluedSlotPosition()
 	end
 
 	if not Min then
-		ScreenGui.BackpackMain.GlueContainer.Position = UDim2.new(0.42, 0, 0, ScreenGui.BackpackMain.HotbarContainer.AbsolutePosition.Y + GuiService:GetGuiInset().Y)
+		BackpackGui.BackpackMain.GlueContainer.Position = UDim2.new(0.42, 0, 0, BackpackGui.BackpackMain.HotbarContainer.AbsolutePosition.Y + GuiService:GetGuiInset().Y)
 		return
 	end
 
 	local MinAbsolutePosition = Min.PlacementSlot.AbsolutePosition
 
-	ScreenGui.BackpackMain.GlueContainer.Position = UDim2.fromOffset(MinAbsolutePosition.X + GuiService:GetGuiInset().X - 30 , MinAbsolutePosition.Y  + GuiService:GetGuiInset().Y)
+	BackpackGui.BackpackMain.GlueContainer.Position = UDim2.fromOffset(MinAbsolutePosition.X + GuiService:GetGuiInset().X - 30 , MinAbsolutePosition.Y  + GuiService:GetGuiInset().Y)
 end
 
 function Animate(Instance, Prop, Value, Damping, Ratio)
@@ -1544,7 +1588,7 @@ function refreshSlot(Slot, PrevSlot)
 
 		defer(function()
 			if not Slot.Loaded then
-				while Slot.PlacementSlot.AbsolutePosition.Y ~= ScreenGui.BackpackMain.HotbarContainer.AbsolutePosition.Y do
+				while Slot.PlacementSlot.AbsolutePosition.Y ~= BackpackGui.BackpackMain.HotbarContainer.AbsolutePosition.Y do
 					wait() -- Need to wait for the UIListLayout to calculate the position
 				end
 
@@ -1985,6 +2029,10 @@ end
 
 function revealSlots(State)
 	if State then
+		local Setting = Backpack.Settings.Animate
+
+		Backpack.Settings.Animate = false
+
 		for i, Slot in ipairs(HotbarSlots) do
 			if not Slot.Tool and Slot.Position <= Backpack.Settings.MaxHotbarToolSlots then
 				Slot.PlacementSlot.Visible = true
@@ -2015,11 +2063,14 @@ function revealSlots(State)
 			end
 		end
 
+		Backpack.Settings.Animate = Setting
+
 		for _, Slot in pairs(HotbarSlots) do
 			local Abs = Slot.PlacementSlot.AbsolutePosition
 
 			Slot.Frame.Position = UDim2.fromOffset(Abs.X + GuiService:GetGuiInset().X, Abs.Y + GuiService:GetGuiInset().Y)
 		end
+
 	else
 		for i, Slot in ipairs(HotbarSlots) do
 			if not Slot.Tool and Slot.Position <= Backpack.Settings.MaxHotbarToolSlots then
@@ -2063,6 +2114,7 @@ function Backpack:Equip(ToolOrSlot, Generic : boolean)
 	if not Character then return end
 	if not Character:IsDescendantOf(workspace) then return end
 	if doesHaveEquipCooldown then return end
+	if Locked then return end
 
 	doesHaveEquipCooldown = true
 
@@ -2328,7 +2380,7 @@ function Backpack:MoveToolToHotbarSlotNumber(Tool, SlotNumber: number, fromPosit
 	GhostSlot.Group.Position = UDim2.fromScale(0, 0)
 	GhostSlot.Button.Position = UDim2.fromScale(0, 0)
 
-	GhostSlot.Parent = ScreenGui.BackpackMain
+	GhostSlot.Parent = BackpackGui.BackpackMain
 
 	local AbsPos = TargetSlot.PlacementSlot.AbsolutePosition
 
@@ -2376,6 +2428,8 @@ function Backpack:MoveToolToInventory(Tool: Tool, fromPosition: UDim2)
 
 	local TargetSlot = newSlot(Tool, true) -- No animation will play when set to true
 
+	local Previous = advanceCanvasToPosition(InventoryFrame.Background.ScrollingFrame, TargetSlot.Frame)
+
 	TargetSlot.Glued = ToolSlot.Glued
 	TargetSlot.Locked = ToolSlot.Locked
 	TargetSlot.CooldownActive = ToolSlot.CooldownActive
@@ -2403,9 +2457,16 @@ function Backpack:MoveToolToInventory(Tool: Tool, fromPosition: UDim2)
 		GhostSlot.Group.Position = UDim2.fromScale(0, 0)
 		GhostSlot.Button.Position = UDim2.fromScale(0, 0)
 
-		GhostSlot.Parent = ScreenGui.BackpackMain
+		GhostSlot.Parent = BackpackGui.BackpackMain
 
 		local AbsPos = TargetSlot.Frame.AbsolutePosition
+
+		local ScrollingFrame = InventoryFrame.Background.ScrollingFrame
+		local now = ScrollingFrame.CanvasPosition
+
+		if isClipped(TargetSlot.Frame, InventoryFrame) then
+			ScrollingFrame.CanvasPosition = Previous
+		end
 
 		Animate(
 			GhostSlot,
@@ -2414,16 +2475,26 @@ function Backpack:MoveToolToInventory(Tool: Tool, fromPosition: UDim2)
 			1,
 			6
 		)
+ 		
+		ScrollingFrame.CanvasPosition = Previous
+
+		if isClipped(TargetSlot.Frame, InventoryFrame) then
+			Animate(ScrollingFrame, "CanvasPosition", now, 0.8, 6)
+		end
 
         if Backpack.Settings.Animate == true then
             spawn(function()
                 while GhostSlot.Parent do
     
-                    if isClipped(GhostSlot, InventoryFrame) then
+                   if isClipped(GhostSlot, InventoryFrame) then
                         GhostSlot.Visible = false
                     else
                         GhostSlot.Visible = true
                     end
+
+					if TargetSlot.Tool == Tool then
+						SlotChangedSignal:Fire(TargetSlot.PlacementSlot or TargetSlot)
+					end
     
                     wait()
                 end
@@ -2522,7 +2593,7 @@ function Backpack:MoveToolToHotbar(Tool : Tool, fromPosition : UDim2)
 	GhostSlot.Group.Position = UDim2.fromScale(0, 0)
 	GhostSlot.Button.Position = UDim2.fromScale(0, 0)
 
-	GhostSlot.Parent = ScreenGui.BackpackMain
+	GhostSlot.Parent = BackpackGui.BackpackMain
 
 	local AbsPos = TargetSlot.PlacementSlot.AbsolutePosition
 
@@ -2644,8 +2715,8 @@ function Backpack:SwapTools(Tool1, Tool2)
 		Slot1.Frame.Button.Visible = false
 		Slot2.Frame.Button.Visible = false
 
-		GhostSlot1.Parent = ScreenGui.BackpackMain
-		GhostSlot2.Parent = ScreenGui.BackpackMain
+		GhostSlot1.Parent = BackpackGui.BackpackMain
+		GhostSlot2.Parent = BackpackGui.BackpackMain
 
 		local Pos1 = GhostSlot1.Position
 		local Pos2 = GhostSlot2.Position
@@ -2699,8 +2770,8 @@ function Backpack:SwapTools(Tool1, Tool2)
 		GhostSlot1.Position = UDim2.fromOffset(main.Frame.AbsolutePosition.X + GuiService:GetGuiInset().X, main.Frame.AbsolutePosition.Y + GuiService:GetGuiInset().Y)
 		GhostSlot2.Position = UDim2.fromOffset(BPButton.AbsolutePosition.X + GuiService:GetGuiInset().X, BPButton.AbsolutePosition.Y + GuiService:GetGuiInset().Y)
 
-		GhostSlot1.Parent = ScreenGui.BackpackMain
-		GhostSlot2.Parent = ScreenGui.BackpackMain
+		GhostSlot1.Parent = BackpackGui.BackpackMain
+		GhostSlot2.Parent = BackpackGui.BackpackMain
 
 		local Pos1 = GhostSlot1.Position
 		local Pos2 = GhostSlot2.Position
@@ -2941,7 +3012,6 @@ end
 
 function Backpack:GlueTool(ToolOrSlot)
 	isModuleRunning()
-	if not LocalPlayer.Character then return end
 
 	local Tool = convert(ToolOrSlot, 1)
 	
@@ -2952,17 +3022,42 @@ function Backpack:GlueTool(ToolOrSlot)
 	onParentUpdate(Tool, nil, true)
 
 	local GlueSlot = GluedSlots[Num]
+	GlueSlot.Glued = true
 	GlueSlot.Tool = Tool
 
 	refreshSlot(GlueSlot)
 
-	Tool.Parent = LocalPlayer.Character
-
 	EquippedTools[Tool] = GlueSlot
-
+	
 	local Abs = GlueSlot.PlacementSlot.AbsolutePosition
+
+	if Backpack.Settings.Animate == true then
+		Spring.stop(GlueSlot.Frame, "Position")
+	end
+
+	if #Backpack:GetEquippedTools() >= Backpack.Settings.MaxHeldTools then
+		for _, Slot in pairs(EquippedTools) do
+			if not Slot.Tool then continue end
+
+			if Slot.Tool.Parent == Character and not Slot.Glued then
+				Slot.Tool.Parent = BackpackInstance
+
+				MoveEquipBar(false, Slot.Frame, 0)
+
+				EquippedTools[Slot.Tool] = nil
+				break
+			end
+		end
+	end
+
+	defer(function()
+		if Tool.Parent ~= Character then
+			Tool.Parent = Character
+		end
+	end)
 	
 	GlueSlot.Frame.Position = UDim2.fromOffset(Abs.X + GuiService:GetGuiInset().X, Abs.Y + GuiService:GetGuiInset().Y + 100)
+	Animate(GlueSlot.Frame, "Position", UDim2.fromOffset(Abs.X + GuiService:GetGuiInset().X, Abs.Y + GuiService:GetGuiInset().Y), .76, 3)
 end
 
 function Backpack:RemoveGlue(ToolOrSlot)
@@ -2974,8 +3069,8 @@ function Backpack:RemoveGlue(ToolOrSlot)
 	local Slot = Backpack:GetSlotFromTool(Tool)
 
 	onParentUpdate(Tool, nil, true)
+
 	newSlot(Tool)
-	
 end
 
 function Backpack:DisableInventory()
@@ -3022,20 +3117,26 @@ function Backpack:UnlockTool(ToolOrSlot)
 end
 
 function Backpack:Disable()
+	isModuleRunning()
 	BackpackIsDisabled = true
 
-	ScreenGui.BackpackMain.Visible = false
+	BackpackGui.BackpackMain.Visible = false
 	BPButton.Visible = false
 end
 
 function Backpack:Enable()
+	isModuleRunning()
 	BackpackIsDisabled = false
 
-	ScreenGui.BackpackMain.Visible = true
+	BackpackGui.BackpackMain.Visible = true
 
 	if not InventoryIsDisabled then
 		BPButton.Visible = true
 	end
+end
+
+function Backpack:GetBackpack()
+	return BackpackInstance
 end
 
 function Backpack:GetEnabled()
@@ -3077,7 +3178,7 @@ function Backpack:SetCooldown(Tool, Seconds: number)
 	Slot.Frame.Button.CooldownFrame.Size = UDim2.fromScale(1, 1)
 
 	TempConnection = RunService.RenderStepped:Connect(function(deltaTime)
-		if Slot.Tool ~= Tool then Slot = Backpack:GetSlotFromTool(Tool) end
+		if Slot.Tool ~= Tool then Slot = Backpack:GetSlotFromTool(Tool) if Slot then Slot.CooldownActive = StartingServerTime end end
 		if not Slot then stop() return end -- Tool probably was destroyed
 		if Slot.CooldownActive ~= StartingServerTime then stop() return end
 
@@ -3209,7 +3310,7 @@ function Backpack.StartBackpack()
 			return
 		end
 	
-		if GuiService.SelectedObject and GuiService.SelectedObject.Name == "ControllerSelectionFrame" and InventoryIsOpen then
+		if GuiService.SelectedObject and GuiService.SelectedObject.Name == "ControllerSelectionFrame" and InventoryIsOpen and Backpack.Settings.CanOrganize then
 			local Target
 	
 			local function findToolValue(inst)
@@ -3384,7 +3485,7 @@ function Backpack.StartBackpack()
 		end
 
 		if not Target then return end
-		if not Target:IsDescendantOf(ScreenGui.BackpackMain) then return end 
+		if not Target:IsDescendantOf(BackpackGui.BackpackMain) then return end 
 		if not Target.Value then return end
 
 		LastSelectedObj = GuiService.SelectedObject.Parent.Parent
@@ -3408,6 +3509,12 @@ function Backpack.StartBackpack()
 	
 	if LocalPlayer.Character then
 		spawn(CharacterAdded, LocalPlayer.Character)
+	end
+
+	if ScreenGui.ZIndexBehavior ~= Enum.ZIndexBehavior.Sibling then
+		warn("Target ScreenGui needs to have a ZIndexBehavior of sibling in order for backpack to work. Setting ZIndexBehavior to sibling...")
+
+		ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	end
 end
 

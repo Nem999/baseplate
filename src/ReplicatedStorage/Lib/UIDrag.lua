@@ -115,6 +115,8 @@ function DraggableObject:Enable()
             return
         end
 
+        if not self.BP.Settings.CanOrganize then return end
+
         if object.Parent.Parent == self.MainGui.Inventory.InventoryMain.Background.ScrollingFrame then
             if not self.BP:IsInventoryOpen() then return end
         end

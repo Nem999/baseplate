@@ -7,14 +7,15 @@ Settings.NeededFreeSpace = 480 -- How much horizontal space is reserved.
 Settings.MinHotbarSlots = 3 -- The minimum amount of hotbar slots allowed to be displayed. Change to higher number if you are willing to give up more space.
 Settings.EquipCooldown = 0.1 -- How long the player has to wait in between equipping tools.
 Settings.SweepInterval = 120 -- How long it takes for the backpack script to clear unused inventory slots from memory.
-Settings.MaxHeldTools = 3 -- How many tools can be held at any given time.
+Settings.MaxHeldTools = 1 -- How many tools can be held at any given time.
 
 
 
 Settings.AutoCalculateMaxToolSlots = true -- If set to true the backpack script will automatically calculate how many tools can fit at once.
 Settings.UseViewportFrame = false -- If set to true then a viewport frame will display tools instead.
 Settings.USE_SCROLLWHEEL = false -- If set to true then scrolling with your mouse will cycle through tools.
-Settings.Animate = false -- If set to true then tools will be more animated if set to false then tools will not be animated.
+Settings.Animate = true -- If set to true then tools will be more animated if set to false then tools will not be animated.
+Settings.CanOrganize = true -- If set to true then the player will be able to organize tools in their backpack, such as swapping and or moving tools.
 
 
 
