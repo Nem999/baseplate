@@ -24,41 +24,7 @@ function init()
 	PlayerDataService:EnableAutoSetup(Template)
 end
 
---[[function PlayerAdded(plr)
-	local DataStore = DataStoreModule.new("Player", plr.UserId)
-
-	local function CharacterAdded()
-		if DataStore.State == true then
-			local Tools = DataStore.Value.Tools
-
-			for _, Tool in pairs(Tools) do
-				local ToolInstance = game.ReplicatedStorage.Tools:FindFirstChild(Tool.Name)
-
-				local ToolClone = ToolInstance:Clone()
-
-				ToolClone.Parent = plr.Backpack
-			end
-		end
-	end
-
-	plr.CharacterAdded:Connect(CharacterAdded)
-
-	if plr.Character then
-		CharacterAdded(plr.Character)
-	end
-
-	DataStore.StateChanged:Connect(stateChanged)
-
-	task.defer(function()
-		stateChanged(DataStore.State, DataStore)
-	end)
-end]]
-
 PlayersService.PlayerAdded:Connect(function(player)
-	player.CharacterAdded:Connect(function()
-		local to = Instance.new("Tool")
-		to.Name = "i"
-	
-		to.Parent = player.Backpack
+	player.CharacterAdded:Connect(function(character)
 	end)
 end)
